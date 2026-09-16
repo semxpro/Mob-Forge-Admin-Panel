@@ -123,15 +123,9 @@
         }
         .login-card h1 { margin: 0; font-size: clamp(1.6rem, 4vw, 2.2rem); letter-spacing: -.06em; }
         .login-card p { margin: 11px auto 24px; color: var(--muted); font-size: .86rem; line-height: 1.7; }
-        .google-login-btn {
-            width: 100%; min-height: 46px; display: inline-flex; align-items: center; justify-content: center; gap: 10px;
-            color: #1f2937; border: 1px solid rgba(255,255,255,.2); border-radius: 12px;
-            background: #fff; font-size: .78rem; font-weight: 800;
-            transition: transform .2s var(--ease), box-shadow .2s ease, background .2s ease;
-        }
-        .google-login-btn:hover { transform: translateY(-1px); background: #f8fafc; box-shadow: 0 10px 25px rgba(0,0,0,.25); }
-        .google-login-btn:disabled { cursor: wait; opacity: .65; transform: none; }
-        .google-login-btn i { color: #4285f4; font-size: 1rem; }
+        .local-login-form { display: grid; gap: 10px; text-align: left; }
+        .local-login-form .field { background: rgba(255,255,255,.07); }
+        .local-login-btn { width: 100%; min-height: 45px; margin-top: 4px; }
         .login-note { margin-top: 18px !important; color: var(--faint) !important; font-size: .7rem !important; }
         .login-error { margin: 14px 0 0; color: #fda4af; font-size: .75rem; }
 
@@ -327,10 +321,14 @@
         <div class="login-card">
             <div class="login-logo"><i class="fas fa-cube"></i></div>
             <h1>Mob Forge Admin</h1>
-            <p>Manage releases, images, categories, badges and download links from one clean workspace.</p>
-            <button class="google-login-btn" id="firebaseGoogleLoginBtn" type="button"><i class="fab fa-google"></i><span>Continue with Google</span></button>
+            <p>Enter your admin credentials to manage releases, images, categories, badges and download links.</p>
+            <form class="local-login-form" id="localLoginForm">
+                <input class="field" id="adminUsername" type="text" autocomplete="username" placeholder="Username" required />
+                <input class="field" id="adminPassword" type="password" autocomplete="current-password" placeholder="Password" required />
+                <button class="primary-btn local-login-btn" type="submit"><i class="fas fa-lock-open"></i> Sign in</button>
+            </form>
             <p class="login-error hidden" id="loginError"></p>
-            <p class="login-note">Sign in with the same Google account used for your Mob Forge workflow. No separate account is created.</p>
+            <p class="login-note">Local admin access gate for this HTML panel.</p>
         </div>
     </section>
 
@@ -479,9 +477,6 @@
     <script type="module">
         import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
         import {
-            getAuth, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signOut
-        } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
-        import {
             getFirestore, collection, doc, getDoc, setDoc, deleteDoc, onSnapshot,
             serverTimestamp
         } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
@@ -502,7 +497,6 @@
         };
 
         const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
         const db = getFirestore(app);
         const storage = getStorage(app);
         let analytics = null;
@@ -518,6 +512,9 @@
             { id: 'mods', label: 'Mods', icon: 'fa-gears' },
             { id: 'shaders', label: 'Shaders', icon: 'fa-sun' }
         ];
+        const LOCAL_ADMIN_USERNAME = 'semxpro';
+        const LOCAL_ADMIN_PASSWORD_HASH = 'a1cafdccf811db9d46b296d02e743623a10e55d57db7cee517cfd9ae6c0df9a0';
+        const LOCAL_ADMIN_ID = 'local-admin';
         const CATALOG_COLLECTION = 'catalogProducts';
         const SETTINGS_COLLECTION = 'siteSettings';
         const SETTINGS_DOC = 'main';
@@ -526,7 +523,8 @@
         const state = { products: [], settings: {}, editingId: null, unsubscribe: null, settingsLoaded: false };
         const els = {
             loading: $('loadingScreen'), login: $('loginScreen'), shell: $('appShell'), loginError: $('loginError'),
-            googleLoginButton: $('firebaseGoogleLoginBtn'), userPill: $('userPill'), welcomeName: $('welcomeName'),
+            localLoginForm: $('localLoginForm'), adminUsername: $('adminUsername'), adminPassword: $('adminPassword'),
+            userPill: $('userPill'), welcomeName: $('welcomeName'),
             productsTable: $('productsTable'), latestProducts: $('latestProducts'), productSearch: $('productSearch'),
             categoryFilter: $('categoryFilter'), statusFilter: $('statusFilter'), productForm: $('productForm'),
             editorHeading: $('editorHeading'), saveProductBtn: $('saveProductBtn'), saveState: $('saveState'),
@@ -758,8 +756,7 @@
             const product = currentFormProduct();
             const validation = validateProduct(product);
             if (validation) { setState(els.saveState, validation, 'error'); showToast(validation, true); return; }
-            const user = auth.currentUser;
-            if (!user) { showToast('Sign in with Google first.', true); return; }
+            if (!isLocalAdminUnlocked()) { showToast('Sign in to the admin panel first.', true); return; }
             els.saveProductBtn.disabled = true;
             setState(els.saveState, 'Saving…');
             let id = state.editingId;
@@ -775,7 +772,7 @@
                     return;
                 }
                 const safeName = file.name.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').slice(-80);
-                storagePath = `catalog-images/${user.uid}/${id}-${Date.now()}-${safeName}`;
+                storagePath = `catalog-images/${LOCAL_ADMIN_ID}/${id}-${Date.now()}-${safeName}`;
                 els.imageProgress.classList.remove('hidden');
                 els.imageProgressBar.style.width = '0%';
                 try {
@@ -794,7 +791,7 @@
                 await setDoc(doc(db, CATALOG_COLLECTION, id), {
                     ...product, imageUrl, storagePath,
                     updatedAt: serverTimestamp(),
-                    ...(existing ? {} : { createdAt: serverTimestamp(), createdBy: user.uid })
+                    ...(existing ? {} : { createdAt: serverTimestamp(), createdBy: LOCAL_ADMIN_ID })
                 }, { merge: true });
                 showToast(existing ? 'Product updated successfully.' : 'Product added to the catalog.');
                 resetProductForm();
@@ -864,8 +861,7 @@
         }
         async function saveSettings(event) {
             event.preventDefault();
-            const user = auth.currentUser;
-            if (!user) return;
+            if (!isLocalAdminUnlocked()) return;
             const payload = {
                 tag: cleanText($('siteTag').value) || 'SEMXPRO',
                 name: cleanText($('siteName').value) || 'Mob Forge',
@@ -873,12 +869,12 @@
                 description: cleanText($('siteDescription').value),
                 logo: safeUrl(els.siteLogoUrl.value, true),
                 updatedAt: serverTimestamp(),
-                updatedBy: user.uid
+                updatedBy: LOCAL_ADMIN_ID
             };
             const file = els.siteLogoFile.files[0];
             if (file) {
                 if (file.size > 10 * 1024 * 1024) { setState(els.settingsState, 'Logo must be 10 MB or smaller.', 'error'); return; }
-                const path = `site-settings/${user.uid}/logo-${Date.now()}-${file.name.toLowerCase().replace(/[^a-z0-9._-]+/g, '-')}`;
+                const path = `site-settings/${LOCAL_ADMIN_ID}/logo-${Date.now()}-${file.name.toLowerCase().replace(/[^a-z0-9._-]+/g, '-')}`;
                 try { payload.logo = await uploadFile(file, path, { style: { width: '0%' } }, $('siteLogoStatus')); }
                 catch (_) { if (!payload.logo) { setState(els.settingsState, 'Logo upload failed. Use a direct URL.', 'error'); return; } }
             }
@@ -907,29 +903,6 @@
             els.userPill.innerHTML = `${picture}<span>${escapeHtml(user.displayName || user.email || 'Google account')}</span>`;
             els.welcomeName.textContent = (user.displayName || 'Admin').split(' ')[0];
         }
-        async function startGoogleLogin() {
-            els.loginError.classList.add('hidden');
-            els.googleLoginButton.disabled = true;
-            els.googleLoginButton.querySelector('span').textContent = 'Connecting to Google…';
-            try {
-                await signInWithPopup(auth, new GoogleAuthProvider());
-            } catch (error) {
-                console.error(error);
-                if (error.code === 'auth/popup-closed-by-user') {
-                    els.loginError.textContent = 'The Google sign-in window was closed.';
-                } else if (error.code === 'auth/operation-not-allowed') {
-                    els.loginError.textContent = 'Enable Google provider in Firebase Authentication first.';
-                } else if (error.code === 'auth/unauthorized-domain') {
-                    els.loginError.textContent = 'Add localhost to Firebase Authentication → Settings → Authorized domains.';
-                } else {
-                    els.loginError.textContent = 'Google login could not connect to Firebase.';
-                }
-                els.loginError.classList.remove('hidden');
-            } finally {
-                els.googleLoginButton.disabled = false;
-                els.googleLoginButton.querySelector('span').textContent = 'Continue with Google';
-            }
-        }
         function subscribeToProducts() {
             state.unsubscribe?.();
             state.unsubscribe = onSnapshot(collection(db, CATALOG_COLLECTION), (snapshot) => {
@@ -955,7 +928,7 @@
 
         CATEGORIES.forEach((item) => {});
         populateCategorySelects();
-        window.mobForgeAdmin = { app, auth, db, storage, categories: CATEGORIES };
+        window.mobForgeAdmin = { app, db, storage, categories: CATEGORIES };
         window.mobForgeAdminReady = Promise.resolve(window.mobForgeAdmin);
 
         document.querySelectorAll('.nav-btn').forEach((button) => button.addEventListener('click', () => setActiveView(button.dataset.view)));
@@ -998,25 +971,61 @@
         });
         ['siteTag', 'siteName', 'siteDescription'].forEach((id) => $(id).addEventListener('input', updateSettingsPreview));
         els.settingsForm.addEventListener('submit', saveSettings);
-        els.googleLoginButton.addEventListener('click', startGoogleLogin);
-        $('signOutBtn').addEventListener('click', () => signOut(auth));
+        async function hashPassword(value) {
+            const bytes = new TextEncoder().encode(value);
+            const digest = await crypto.subtle.digest('SHA-256', bytes);
+            return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+        }
+        function isLocalAdminUnlocked() {
+            return sessionStorage.getItem('mob-forge-local-admin') === 'unlocked';
+        }
+        async function localLogin(event) {
+            event.preventDefault();
+            const username = cleanText(els.adminUsername.value).toLowerCase();
+            const passwordHash = await hashPassword(els.adminPassword.value);
+            if (username === LOCAL_ADMIN_USERNAME && passwordHash === LOCAL_ADMIN_PASSWORD_HASH) {
+                sessionStorage.setItem('mob-forge-local-admin', 'unlocked');
+                els.loginError.classList.add('hidden');
+                els.login.classList.add('hidden');
+                els.shell.classList.remove('hidden');
+                els.userPill.innerHTML = '<i class="fas fa-user-shield"></i><span>semxpro</span>';
+                els.welcomeName.textContent = 'Admin';
+                subscribeToProducts();
+                await loadSettings();
+                return;
+            }
+            els.loginError.textContent = 'Wrong username or password.';
+            els.loginError.classList.remove('hidden');
+            els.adminPassword.value = '';
+            els.adminPassword.focus();
+        }
+        function lockLocalAdmin() {
+            sessionStorage.removeItem('mob-forge-local-admin');
+            state.unsubscribe?.();
+            els.shell.classList.add('hidden');
+            els.login.classList.remove('hidden');
+            els.adminUsername.value = '';
+            els.adminPassword.value = '';
+            els.adminUsername.focus();
+        }
+        els.localLoginForm.addEventListener('submit', localLogin);
+        $('signOutBtn').addEventListener('click', lockLocalAdmin);
         window.addEventListener('keydown', (event) => {
             if (event.key === 'Escape') setModal('previewModal', false);
         });
 
-        onAuthStateChanged(auth, async (user) => {
-            els.loading.classList.add('hidden');
-            if (!user) {
-                els.shell.classList.add('hidden');
-                els.login.classList.remove('hidden');
-                return;
-            }
+        els.loading.classList.add('hidden');
+        if (isLocalAdminUnlocked()) {
             els.login.classList.add('hidden');
             els.shell.classList.remove('hidden');
-            renderUser(user);
+            els.userPill.innerHTML = '<i class="fas fa-user-shield"></i><span>semxpro</span>';
+            els.welcomeName.textContent = 'Admin';
             subscribeToProducts();
-            await loadSettings();
-        });
+            loadSettings();
+        } else {
+            els.login.classList.remove('hidden');
+            els.adminUsername.focus();
+        }
     </script>
 </body>
 </html>
